@@ -22,7 +22,7 @@ public class MenuPanel extends JPanel {
     public JButton boton6;
     public JButton boton7;
 
-    JButton miPerfil;
+    public JButton miPerfil;
 
     public MenuPanel(int userType) {
         initialize(userType);

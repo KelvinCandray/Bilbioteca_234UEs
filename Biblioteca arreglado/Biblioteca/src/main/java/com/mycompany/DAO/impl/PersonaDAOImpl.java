@@ -159,6 +159,140 @@ public class PersonaDAOImpl implements PersonaDAO {
         }
     }
 
+    // ─── EDICIÓN / ELIMINACIÓN ──────────────────────────────────────────────
+
+    @Override
+    public void actualizarPersona(Persona persona) throws Exception {
+        String check = "SELECT COUNT(*) FROM personas WHERE correo = ? AND id_persona != ?";
+        try (PreparedStatement ps = con().prepareStatement(check)) {
+            ps.setString(1, persona.getCorreo());
+            ps.setInt(2, persona.getIdPersona());
+            ResultSet rs = ps.executeQuery();
+            if (rs.next() && rs.getInt(1) > 0)
+                throw new Exception("Ya existe otra persona registrada con ese correo.");
+        }
+        String sql = """
+            UPDATE personas
+            SET primer_nombre = ?, apellido = ?, correo = ?, telefono = ?, fecha_nacimiento = ?,
+                pasaje = ?, numero_casa = ?, colonia = ?, municipio = ?, departamento = ?
+            WHERE id_persona = ?
+            """;
+        try (PreparedStatement ps = con().prepareStatement(sql)) {
+            ps.setString(1, persona.getPrimerNombre());
+            ps.setString(2, persona.getApellido());
+            ps.setString(3, persona.getCorreo());
+            ps.setString(4, persona.getTelefono());
+            ps.setString(5, persona.getFechaNacimiento());
+            ps.setString(6, persona.getPasaje());
+            ps.setString(7, persona.getNumeroCasa());
+            ps.setString(8, persona.getColonia());
+            ps.setString(9, persona.getMunicipio());
+            ps.setString(10, persona.getDepartamento());
+            ps.setInt(11, persona.getIdPersona());
+            int filas = ps.executeUpdate();
+            if (filas == 0) throw new Exception("La persona que intenta editar ya no existe.");
+        }
+    }
+
+    @Override
+    public void actualizarUsuario(int idPersona, String usuario, String nuevaContrasena) throws Exception {
+        String check = "SELECT COUNT(*) FROM usuarios WHERE usuario = ? AND id_persona != ?";
+        try (PreparedStatement ps = con().prepareStatement(check)) {
+            ps.setString(1, usuario);
+            ps.setInt(2, idPersona);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next() && rs.getInt(1) > 0)
+                throw new Exception("Ese nombre de usuario ya está en uso.");
+        }
+        // Si no se proporciona una contraseña nueva, se conserva la actual (no se pisa con vacío).
+        boolean cambiarContrasena = nuevaContrasena != null && !nuevaContrasena.isEmpty();
+        String sql = cambiarContrasena
+                ? "UPDATE usuarios SET usuario = ?, contrasena = ? WHERE id_persona = ?"
+                : "UPDATE usuarios SET usuario = ? WHERE id_persona = ?";
+        try (PreparedStatement ps = con().prepareStatement(sql)) {
+            ps.setString(1, usuario);
+            if (cambiarContrasena) {
+                ps.setString(2, nuevaContrasena);
+                ps.setInt(3, idPersona);
+            } else {
+                ps.setInt(2, idPersona);
+            }
+            int filas = ps.executeUpdate();
+            if (filas == 0) throw new Exception("El usuario que intenta editar ya no existe.");
+        }
+    }
+
+    @Override
+    public void actualizarEmpleado(int idPersona, double salario, String tipoEmpleado, String usuario, String nuevaContrasena) throws Exception {
+        if (salario < 408.80)
+            throw new Exception("El salario no puede ser menor al mínimo (Q408.80).");
+        String check = "SELECT COUNT(*) FROM empleados WHERE usuario = ? AND id_persona != ?";
+        try (PreparedStatement ps = con().prepareStatement(check)) {
+            ps.setString(1, usuario);
+            ps.setInt(2, idPersona);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next() && rs.getInt(1) > 0)
+                throw new Exception("Ese nombre de usuario ya está en uso.");
+        }
+        boolean cambiarContrasena = nuevaContrasena != null && !nuevaContrasena.isEmpty();
+        String sql = cambiarContrasena
+                ? "UPDATE empleados SET salario = ?, tipo_empleado = ?, usuario = ?, contrasena = ? WHERE id_persona = ?"
+                : "UPDATE empleados SET salario = ?, tipo_empleado = ?, usuario = ? WHERE id_persona = ?";
+        try (PreparedStatement ps = con().prepareStatement(sql)) {
+            ps.setDouble(1, salario);
+            ps.setString(2, tipoEmpleado);
+            ps.setString(3, usuario);
+            if (cambiarContrasena) {
+                ps.setString(4, nuevaContrasena);
+                ps.setInt(5, idPersona);
+            } else {
+                ps.setInt(4, idPersona);
+            }
+            int filas = ps.executeUpdate();
+            if (filas == 0) throw new Exception("El empleado que intenta editar ya no existe.");
+        }
+    }
+
+    @Override
+    public void eliminarPersona(int idPersona) throws Exception {
+        if (idPersona == 1)
+            throw new Exception("No se puede dar de baja la cuenta administradora predeterminada del sistema.");
+
+        ConexionBD.ejecutarEnTransaccion(() -> {
+            if (existeUsuario(idPersona)) {
+                String sqlHistorial = "SELECT COUNT(*) FROM prestamos WHERE id_usuario = ?";
+                try (PreparedStatement ps = con().prepareStatement(sqlHistorial)) {
+                    ps.setInt(1, idPersona);
+                    ResultSet rs = ps.executeQuery();
+                    if (rs.next() && rs.getInt(1) > 0)
+                        throw new Exception("No se puede dar de baja: esta persona tiene préstamos en su historial como lector.");
+                }
+                try (PreparedStatement ps = con().prepareStatement("DELETE FROM usuarios WHERE id_persona = ?")) {
+                    ps.setInt(1, idPersona);
+                    ps.executeUpdate();
+                }
+            }
+            if (existeEmpleado(idPersona)) {
+                String sqlHistorial = "SELECT COUNT(*) FROM prestamos WHERE id_empleado = ?";
+                try (PreparedStatement ps = con().prepareStatement(sqlHistorial)) {
+                    ps.setInt(1, idPersona);
+                    ResultSet rs = ps.executeQuery();
+                    if (rs.next() && rs.getInt(1) > 0)
+                        throw new Exception("No se puede dar de baja: esta persona aprobó préstamos que siguen en el historial.");
+                }
+                try (PreparedStatement ps = con().prepareStatement("DELETE FROM empleados WHERE id_persona = ?")) {
+                    ps.setInt(1, idPersona);
+                    ps.executeUpdate();
+                }
+            }
+            try (PreparedStatement ps = con().prepareStatement("DELETE FROM personas WHERE id_persona = ?")) {
+                ps.setInt(1, idPersona);
+                int filas = ps.executeUpdate();
+                if (filas == 0) throw new Exception("La persona que intenta dar de baja ya no existe.");
+            }
+        });
+    }
+
     // ─── VERIFICACIONES ───────────────────────────────────────────────────────
 
     @Override
@@ -210,7 +344,9 @@ public class PersonaDAOImpl implements PersonaDAO {
                    p.fecha_nacimiento, p.departamento, p.municipio,
                    CASE WHEN u.id_persona IS NOT NULL THEN 'Sí' ELSE 'No' END AS es_usuario,
                    CASE WHEN e.id_persona IS NOT NULL THEN e.tipo_empleado ELSE 'No' END AS es_empleado,
-                   COALESCE(e.salario, 0) AS salario
+                   COALESCE(e.salario, 0) AS salario,
+                   p.pasaje, p.numero_casa, p.colonia,
+                   COALESCE(u.usuario, e.usuario) AS usuario_login
             FROM personas p
             LEFT JOIN usuarios u ON p.id_persona = u.id_persona
             LEFT JOIN empleados e ON p.id_persona = e.id_persona
@@ -230,7 +366,11 @@ public class PersonaDAOImpl implements PersonaDAO {
                     rs.getString("municipio"),
                     rs.getString("es_usuario"),
                     rs.getString("es_empleado"),
-                    rs.getDouble("salario") > 0 ? rs.getDouble("salario") : "N/A"
+                    rs.getDouble("salario") > 0 ? rs.getDouble("salario") : "N/A",
+                    rs.getString("pasaje"),
+                    rs.getString("numero_casa"),
+                    rs.getString("colonia"),
+                    rs.getString("usuario_login")
                 });
             }
         }

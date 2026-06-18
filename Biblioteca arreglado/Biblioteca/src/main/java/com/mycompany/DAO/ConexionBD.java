@@ -78,4 +78,39 @@ public class ConexionBD {
             }
         } catch (SQLException ignored) {}
     }
+
+    // ─── TRANSACCIONES ──────────────────────────────────────────────────────
+
+    /**
+     * Operación que agrupa una o más sentencias SQL que deben aplicarse
+     * todas o ninguna (ej. actualizar un préstamo Y su ejemplar asociado).
+     */
+    @FunctionalInterface
+    public interface OperacionTransaccional {
+        void ejecutar() throws Exception;
+    }
+
+    /**
+     * Ejecuta {@code operacion} dentro de una transacción real: desactiva el
+     * autocommit, corre todas las sentencias que la operación contenga (sin
+     * importar en qué DAO estén, ya que todos comparten la misma conexión
+     * singleton) y hace commit solo si todo terminó bien. Si algo falla, se
+     * revierte por completo evitando que la base de datos quede en un estado
+     * a medias (ej. un préstamo marcado "Prestado" con su ejemplar todavía
+     * "Disponible").
+     */
+    public static void ejecutarEnTransaccion(OperacionTransaccional operacion) throws Exception {
+        Connection con = getConexion();
+        boolean autoCommitOriginal = con.getAutoCommit();
+        try {
+            con.setAutoCommit(false);
+            operacion.ejecutar();
+            con.commit();
+        } catch (Exception e) {
+            try { con.rollback(); } catch (SQLException ignored) {}
+            throw e;
+        } finally {
+            try { con.setAutoCommit(autoCommitOriginal); } catch (SQLException ignored) {}
+        }
+    }
 }

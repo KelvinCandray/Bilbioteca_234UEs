@@ -63,7 +63,7 @@ public class LogInView extends JFrame {
         imgLogo = new JLabel();
         lblLogIn = new JLabel("Inicio de sesión");
         lblContraseña = new JLabel("Contraseña");
-        lblCorreo = new JLabel("Correo");
+        lblCorreo = new JLabel("Usuario");
         lblContraseñaError = new JLabel("");
         lblCorreoError = new JLabel("");
         

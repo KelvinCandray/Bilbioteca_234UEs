@@ -3,9 +3,14 @@ package com.mycompany.contoller;
 import com.mycompany.DAO.PersonaDAO;
 import com.mycompany.DAO.impl.PersonaDAOImpl;
 import com.mycompany.model.Empleado;
+import com.mycompany.model.Persona;
 import com.mycompany.model.Usuario;
+import com.mycompany.util.Validations;
 import com.mycompany.view.LogInView;
+import com.mycompany.view.PersonaData;
+import java.awt.BorderLayout;
 import java.awt.Color;
+import javax.swing.JFrame;
 import javax.swing.JOptionPane;
 import javax.swing.border.LineBorder;
 
@@ -29,6 +34,7 @@ public class LogInController {
 
     private void buttonActions() {
         view.btnlogIn.addActionListener(e -> intentarIniciarSesion());
+        view.btnsingUp.addActionListener(e -> mostrarRegistro());
     }
 
     /**
@@ -112,6 +118,80 @@ public class LogInController {
         view.lblCorreoError.setText("Usuario o contraseña incorrectos");
         view.txtCorreo.setBorder(new LineBorder(Color.RED, 1));
         view.txtContraseña.setBorder(new LineBorder(Color.RED, 1));
+    }
+
+    /**
+     * Abre una ventana de autorregistro para crear una cuenta de Usuario
+     * (lector). A propósito no permite elegir el rol "Empleado": esa cuenta
+     * solo la puede crear un administrador desde su panel.
+     */
+    private void mostrarRegistro() {
+        PersonaData form = new PersonaData();
+        form.configurarParaAutoRegistro();
+
+        JFrame ventana = new JFrame("Crear cuenta de lector");
+        ventana.setSize(820, 560);
+        ventana.setMinimumSize(new java.awt.Dimension(820, 560));
+        ventana.setLocationRelativeTo(view);
+        ventana.setLayout(new BorderLayout());
+        ventana.add(form, BorderLayout.CENTER);
+        ventana.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+
+        form.btnGuardar.addActionListener(e -> {
+            try {
+                String errorCorreo = Validations.correoValidation(form.txtCorreo);
+                if (!errorCorreo.isEmpty()) {
+                    JOptionPane.showMessageDialog(ventana, errorCorreo, "Correo inválido", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                String errorPass = Validations.passwordValidation(form.txtContrasena);
+                if (!errorPass.isEmpty()) {
+                    JOptionPane.showMessageDialog(ventana, errorPass, "Contraseña inválida", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                String usuarioLogin = form.getUsuarioLogin();
+                if (usuarioLogin.isEmpty()) {
+                    JOptionPane.showMessageDialog(ventana, "El nombre de usuario es obligatorio.", "Datos incompletos", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                Persona datos;
+                try {
+                    datos = form.getPersonaFromFields();
+                } catch (NumberFormatException nfe) {
+                    JOptionPane.showMessageDialog(ventana, "El DUI / ID Persona debe ser un número entero.", "Datos inválidos", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                if (datos.getPrimerNombre().isEmpty() || datos.getApellido().isEmpty() || datos.getFechaNacimiento().isEmpty()) {
+                    JOptionPane.showMessageDialog(ventana, "Nombre, apellido y fecha de nacimiento son obligatorios.", "Datos incompletos", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+
+                Usuario nuevoUsuario = new Usuario();
+                nuevoUsuario.setIdPersona(datos.getIdPersona());
+                nuevoUsuario.setPrimerNombre(datos.getPrimerNombre());
+                nuevoUsuario.setApellido(datos.getApellido());
+                nuevoUsuario.setCorreo(datos.getCorreo());
+                nuevoUsuario.setTelefono(datos.getTelefono());
+                nuevoUsuario.setFechaNacimiento(datos.getFechaNacimiento());
+                nuevoUsuario.setPasaje(datos.getPasaje());
+                nuevoUsuario.setNumeroCasa(datos.getNumeroCasa());
+                nuevoUsuario.setColonia(datos.getColonia());
+                nuevoUsuario.setMunicipio(datos.getMunicipio());
+                nuevoUsuario.setDepartamento(datos.getDepartamento());
+                nuevoUsuario.setUsuario(usuarioLogin);
+                nuevoUsuario.setContrasena(form.getContrasena());
+
+                personaDAO.registrarUsuario(nuevoUsuario);
+                JOptionPane.showMessageDialog(ventana, "¡Cuenta creada! Ya puedes iniciar sesión.", "Éxito", JOptionPane.INFORMATION_MESSAGE);
+                ventana.dispose();
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(ventana, ex.getMessage(), "No se pudo crear la cuenta", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        form.btnCancelar.addActionListener(e -> ventana.dispose());
+
+        ventana.setVisible(true);
     }
 
     private void textActions() {

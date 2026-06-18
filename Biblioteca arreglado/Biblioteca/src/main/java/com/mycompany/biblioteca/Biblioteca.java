@@ -1,6 +1,7 @@
 package com.mycompany.biblioteca;
 
 import com.mycompany.contoller.LogInController;
+import com.mycompany.util.AuditoriaPrestamos;
 
 
 /**
@@ -10,6 +11,8 @@ import com.mycompany.contoller.LogInController;
 public class Biblioteca {
 
     public static void main(String[] args) {
+        // Refresca préstamos retrasados y multas vencidas antes de mostrar cualquier pantalla
+        AuditoriaPrestamos.ejecutar();
         LogInController controlador = new LogInController();
     }
 }

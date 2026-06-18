@@ -104,27 +104,30 @@ public class PrestamoDAOImpl implements PrestamoDAO {
             idEjemplar = rs.getInt("id_ejemplar");
         }
 
-        // Actualizar el préstamo a 'Prestado'
-        String sqlPrestamo = """
-            UPDATE prestamos
-            SET estado = 'Prestado',
-                id_empleado = ?,
-                fecha_retiro = DATE('now'),
-                fecha_ideal_regreso = DATE('now', '+31 days')
-            WHERE id_prestamo = ?
-            """;
-        try (PreparedStatement ps = con().prepareStatement(sqlPrestamo)) {
-            ps.setInt(1, idEmpleado);
-            ps.setInt(2, idPrestamo);
-            ps.executeUpdate();
-        }
+        // Actualizar el préstamo a 'Prestado' y el ejemplar a 'Prestado' como una sola unidad:
+        // si una de las dos sentencias falla, no debe quedar un préstamo "Prestado" con su
+        // ejemplar todavía "Disponible" (o viceversa).
+        ConexionBD.ejecutarEnTransaccion(() -> {
+            String sqlPrestamo = """
+                UPDATE prestamos
+                SET estado = 'Prestado',
+                    id_empleado = ?,
+                    fecha_retiro = DATE('now'),
+                    fecha_ideal_regreso = DATE('now', '+31 days')
+                WHERE id_prestamo = ?
+                """;
+            try (PreparedStatement ps = con().prepareStatement(sqlPrestamo)) {
+                ps.setInt(1, idEmpleado);
+                ps.setInt(2, idPrestamo);
+                ps.executeUpdate();
+            }
 
-        // Actualizar el estado del ejemplar (lo que hacía el trigger en MySQL)
-        String sqlEjemplar = "UPDATE ejemplares SET estado = 'Prestado' WHERE id_ejemplar = ?";
-        try (PreparedStatement ps = con().prepareStatement(sqlEjemplar)) {
-            ps.setInt(1, idEjemplar);
-            ps.executeUpdate();
-        }
+            String sqlEjemplar = "UPDATE ejemplares SET estado = 'Prestado' WHERE id_ejemplar = ?";
+            try (PreparedStatement ps = con().prepareStatement(sqlEjemplar)) {
+                ps.setInt(1, idEjemplar);
+                ps.executeUpdate();
+            }
+        });
     }
 
     /**
@@ -164,45 +167,49 @@ public class PrestamoDAOImpl implements PrestamoDAO {
         if ("Devuelto".equals(estadoPrestamo))
             throw new Exception("Este préstamo ya fue devuelto anteriormente.");
 
-        // Cerrar el préstamo
-        String sqlPrestamo = """
-            UPDATE prestamos
-            SET estado = 'Devuelto', fecha_real_regreso = DATE('now')
-            WHERE id_prestamo = ?
-            """;
-        try (PreparedStatement ps = con().prepareStatement(sqlPrestamo)) {
-            ps.setInt(1, idPrestamo);
-            ps.executeUpdate();
-        }
+        boolean veniaRetrasado = LocalDate.now().isAfter(LocalDate.parse(fechaIdeal));
 
-        // Si había multas retrasadas, congelarlas en 'Pendiente'
-        if (LocalDate.now().isAfter(LocalDate.parse(fechaIdeal))) {
-            String sqlMulta = "UPDATE multas SET estado = 'Pendiente' WHERE id_prestamo = ? AND estado = 'Retrasada'";
-            try (PreparedStatement ps = con().prepareStatement(sqlMulta)) {
-                ps.setInt(1, idPrestamo);
-                ps.executeUpdate();
-            }
-        }
-
-        // Actualizar estado físico del ejemplar
-        String sqlEjemplar = "UPDATE ejemplares SET estado = ? WHERE id_ejemplar = ?";
-        try (PreparedStatement ps = con().prepareStatement(sqlEjemplar)) {
-            ps.setString(1, estadoEjemplar);
-            ps.setInt(2, idEjemplar);
-            ps.executeUpdate();
-        }
-
-        // Si el ejemplar regresó dañado, generar multa por daño (lo que hacía el trigger)
-        if ("Dañado".equals(estadoEjemplar)) {
-            String sqlMultaDanio = """
-                INSERT INTO multas (id_prestamo, tipo_multa, fecha_generacion, fecha_maxima_pagar, monto, estado)
-                VALUES (?, 'Daño', DATE('now'), DATE('now', '+31 days'), 15.00, 'Pendiente')
+        ConexionBD.ejecutarEnTransaccion(() -> {
+            // Cerrar el préstamo
+            String sqlPrestamo = """
+                UPDATE prestamos
+                SET estado = 'Devuelto', fecha_real_regreso = DATE('now')
+                WHERE id_prestamo = ?
                 """;
-            try (PreparedStatement ps = con().prepareStatement(sqlMultaDanio)) {
+            try (PreparedStatement ps = con().prepareStatement(sqlPrestamo)) {
                 ps.setInt(1, idPrestamo);
                 ps.executeUpdate();
             }
-        }
+
+            // Si había multas retrasadas, congelarlas en 'Pendiente'
+            if (veniaRetrasado) {
+                String sqlMulta = "UPDATE multas SET estado = 'Pendiente' WHERE id_prestamo = ? AND estado = 'Retrasada'";
+                try (PreparedStatement ps = con().prepareStatement(sqlMulta)) {
+                    ps.setInt(1, idPrestamo);
+                    ps.executeUpdate();
+                }
+            }
+
+            // Actualizar estado físico del ejemplar
+            String sqlEjemplar = "UPDATE ejemplares SET estado = ? WHERE id_ejemplar = ?";
+            try (PreparedStatement ps = con().prepareStatement(sqlEjemplar)) {
+                ps.setString(1, estadoEjemplar);
+                ps.setInt(2, idEjemplar);
+                ps.executeUpdate();
+            }
+
+            // Si el ejemplar regresó dañado, generar multa por daño (lo que hacía el trigger)
+            if ("Dañado".equals(estadoEjemplar)) {
+                String sqlMultaDanio = """
+                    INSERT INTO multas (id_prestamo, tipo_multa, fecha_generacion, fecha_maxima_pagar, monto, estado)
+                    VALUES (?, 'Daño', DATE('now'), DATE('now', '+31 days'), 15.00, 'Pendiente')
+                    """;
+                try (PreparedStatement ps = con().prepareStatement(sqlMultaDanio)) {
+                    ps.setInt(1, idPrestamo);
+                    ps.executeUpdate();
+                }
+            }
+        });
     }
 
     /**
@@ -230,6 +237,62 @@ public class PrestamoDAOImpl implements PrestamoDAO {
         }
     }
 
+    /**
+     * Permite a un administrador ajustar el monto o extender la fecha límite de pago
+     * de una multa (ej. por un reclamo justificado). No se puede modificar una multa
+     * que ya fue pagada; el resto de los campos (tipo, fechas de generación/pago real,
+     * estado) son hechos históricos y solo cambian a través de los flujos dedicados
+     * (registrarPago, exonerarMulta, revisarMultasVencidas).
+     */
+    @Override
+    public void modificarMulta(int idMulta, double nuevoMonto, String nuevaFechaMaximaPagar) throws Exception {
+        String estadoActual;
+        String sqlGet = "SELECT estado FROM multas WHERE id_multa = ?";
+        try (PreparedStatement ps = con().prepareStatement(sqlGet)) {
+            ps.setInt(1, idMulta);
+            ResultSet rs = ps.executeQuery();
+            if (!rs.next()) throw new Exception("La multa no existe.");
+            estadoActual = rs.getString("estado");
+        }
+        if ("Pagada".equals(estadoActual))
+            throw new Exception("No se puede modificar una multa que ya fue pagada.");
+        if (nuevoMonto < 0)
+            throw new Exception("El monto no puede ser negativo.");
+
+        String sql = "UPDATE multas SET monto = ?, fecha_maxima_pagar = ? WHERE id_multa = ?";
+        try (PreparedStatement ps = con().prepareStatement(sql)) {
+            ps.setDouble(1, nuevoMonto);
+            ps.setString(2, nuevaFechaMaximaPagar);
+            ps.setInt(3, idMulta);
+            ps.executeUpdate();
+        }
+    }
+
+    /**
+     * Exonera (perdona) una multa: bajo el esquema actual no existe un estado
+     * "Exonerada" propio, así que se modela como pagada con monto $0 y la fecha
+     * de hoy, dejando rastro de que se cerró sin cobrar.
+     */
+    @Override
+    public void exonerarMulta(int idMulta) throws Exception {
+        String estadoActual;
+        String sqlGet = "SELECT estado FROM multas WHERE id_multa = ?";
+        try (PreparedStatement ps = con().prepareStatement(sqlGet)) {
+            ps.setInt(1, idMulta);
+            ResultSet rs = ps.executeQuery();
+            if (!rs.next()) throw new Exception("La multa no existe.");
+            estadoActual = rs.getString("estado");
+        }
+        if ("Pagada".equals(estadoActual))
+            throw new Exception("Esta multa ya está cerrada (pagada o exonerada).");
+
+        String sql = "UPDATE multas SET estado = 'Pagada', monto = 0, fecha_real_pago = DATE('now') WHERE id_multa = ?";
+        try (PreparedStatement ps = con().prepareStatement(sql)) {
+            ps.setInt(1, idMulta);
+            ps.executeUpdate();
+        }
+    }
+
     // ─── AUDITORÍA (reemplaza los cursores de MySQL) ──────────────────────────
 
     /**
@@ -249,21 +312,23 @@ public class PrestamoDAOImpl implements PrestamoDAO {
         }
 
         for (int idPrestamo : vencidos) {
-            // Generar multa de retraso
-            String sqlMulta = """
-                INSERT INTO multas (id_prestamo, tipo_multa, fecha_generacion, fecha_maxima_pagar, monto, estado)
-                VALUES (?, 'Retraso', DATE('now'), DATE('now', '+31 days'), 10.00, 'Pendiente')
-                """;
-            try (PreparedStatement ps = con().prepareStatement(sqlMulta)) {
-                ps.setInt(1, idPrestamo);
-                ps.executeUpdate();
-            }
-            // Marcar préstamo como retrasado
-            String sqlUpdate = "UPDATE prestamos SET estado = 'Retrasado' WHERE id_prestamo = ?";
-            try (PreparedStatement ps = con().prepareStatement(sqlUpdate)) {
-                ps.setInt(1, idPrestamo);
-                ps.executeUpdate();
-            }
+            ConexionBD.ejecutarEnTransaccion(() -> {
+                // Generar multa de retraso
+                String sqlMulta = """
+                    INSERT INTO multas (id_prestamo, tipo_multa, fecha_generacion, fecha_maxima_pagar, monto, estado)
+                    VALUES (?, 'Retraso', DATE('now'), DATE('now', '+31 days'), 10.00, 'Pendiente')
+                    """;
+                try (PreparedStatement ps = con().prepareStatement(sqlMulta)) {
+                    ps.setInt(1, idPrestamo);
+                    ps.executeUpdate();
+                }
+                // Marcar préstamo como retrasado
+                String sqlUpdate = "UPDATE prestamos SET estado = 'Retrasado' WHERE id_prestamo = ?";
+                try (PreparedStatement ps = con().prepareStatement(sqlUpdate)) {
+                    ps.setInt(1, idPrestamo);
+                    ps.executeUpdate();
+                }
+            });
         }
     }
 
@@ -326,8 +391,8 @@ public class PrestamoDAOImpl implements PrestamoDAO {
     @Override
     public List<Prestamo> obtenerPrestamosDeUsuario(int idUsuario) throws Exception {
         String sql = """
-            SELECT pr.id_prestamo, pr.id_usuario, pr.id_empleado, pr.id_ejemplar,
-                   pr.estado, pr.fecha_retiro, pr.fecha_ideal_regreso, pr.fecha_real_regreso,
+            SELECT pr.id_prestamo, pr.id_usuario, pr.id_empleado, pr.id_ejemplar, e.ISBN,
+                   pr.fecha_solicitud, pr.estado, pr.fecha_retiro, pr.fecha_ideal_regreso, pr.fecha_real_regreso,
                    p.primer_nombre || ' ' || p.apellido AS nombre_usuario,
                    l.titulo AS titulo_libro
             FROM prestamos pr
@@ -429,8 +494,8 @@ public class PrestamoDAOImpl implements PrestamoDAO {
 
     private List<Prestamo> obtenerPrestamos(String where) throws Exception {
         String sql = """
-            SELECT pr.id_prestamo, pr.id_usuario, pr.id_empleado, pr.id_ejemplar,
-                   pr.estado, pr.fecha_retiro, pr.fecha_ideal_regreso, pr.fecha_real_regreso,
+            SELECT pr.id_prestamo, pr.id_usuario, pr.id_empleado, pr.id_ejemplar, e.ISBN,
+                   pr.fecha_solicitud, pr.estado, pr.fecha_retiro, pr.fecha_ideal_regreso, pr.fecha_real_regreso,
                    p.primer_nombre || ' ' || p.apellido AS nombre_usuario,
                    l.titulo AS titulo_libro
             FROM prestamos pr
@@ -452,6 +517,8 @@ public class PrestamoDAOImpl implements PrestamoDAO {
         p.setIdUsuario(rs.getInt("id_usuario"));
         p.setIdEmpleado(rs.getInt("id_empleado"));
         p.setIdEjemplar(rs.getInt("id_ejemplar"));
+        p.setIsbn(rs.getString("ISBN"));
+        p.setFechaSolicitud(rs.getString("fecha_solicitud"));
         p.setEstado(rs.getString("estado"));
         p.setFechaRetiro(rs.getString("fecha_retiro"));
         p.setFechaIdealRegreso(rs.getString("fecha_ideal_regreso"));
@@ -472,6 +539,15 @@ public class PrestamoDAOImpl implements PrestamoDAO {
         m.setMonto(rs.getDouble("monto"));
         m.setEstado(rs.getString("estado"));
         m.setIdUsuario(rs.getInt("id_usuario"));
+        m.setPagoATiempo(calcularPagoATiempo(rs.getString("fecha_real_pago"), rs.getString("fecha_maxima_pagar")));
         return m;
+    }
+
+    /** "Pendiente" si aún no se pagó; si ya se pagó, "Si" o "No" según si fue antes o después del límite. */
+    private String calcularPagoATiempo(String fechaRealPago, String fechaMaximaPagar) {
+        if (fechaRealPago == null || fechaRealPago.isEmpty()) return "Pendiente";
+        LocalDate pago = LocalDate.parse(fechaRealPago);
+        LocalDate maxima = LocalDate.parse(fechaMaximaPagar);
+        return !pago.isAfter(maxima) ? "Si" : "No";
     }
 }

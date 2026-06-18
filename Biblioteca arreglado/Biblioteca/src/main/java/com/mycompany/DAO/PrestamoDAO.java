@@ -18,6 +18,8 @@ public interface PrestamoDAO {
     void rechazarPrestamo(int idPrestamo) throws Exception;
     void registrarDevolucion(int idPrestamo, String estadoEjemplar) throws Exception;
     void registrarPago(int idMulta, double monto) throws Exception;
+    void modificarMulta(int idMulta, double nuevoMonto, String nuevaFechaMaximaPagar) throws Exception;
+    void exonerarMulta(int idMulta) throws Exception;
 
     // Auditoría automática (reemplaza los cursores de MySQL)
     void revisarPrestamosVencidos() throws Exception;

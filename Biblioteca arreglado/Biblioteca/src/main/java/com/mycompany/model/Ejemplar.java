@@ -13,6 +13,9 @@ public class Ejemplar {
     private String isbn;
     private String estado; // 'Disponible', 'Prestado', 'Dañado', 'Perdido'
 
+    // Campo extra para mostrar en listados (viene de un JOIN con libros)
+    private String tituloLibro;
+
     public Ejemplar() {}
 
     public Ejemplar(int idEjemplar, String isbn, String estado) {
@@ -29,4 +32,7 @@ public class Ejemplar {
 
     public String getEstado() { return estado; }
     public void setEstado(String estado) { this.estado = estado; }
+
+    public String getTituloLibro() { return tituloLibro; }
+    public void setTituloLibro(String tituloLibro) { this.tituloLibro = tituloLibro; }
 }

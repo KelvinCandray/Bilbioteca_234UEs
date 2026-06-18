@@ -14,6 +14,7 @@ public class Prestamo {
     private int idEmpleado;
     private int idEjemplar;
     private String isbn;
+    private String fechaSolicitud;
     private String fechaRetiro;
     private String fechaIdealRegreso;
     private String fechaRealRegreso;
@@ -39,6 +40,9 @@ public class Prestamo {
 
     public String getIsbn() { return isbn; }
     public void setIsbn(String isbn) { this.isbn = isbn; }
+
+    public String getFechaSolicitud() { return fechaSolicitud; }
+    public void setFechaSolicitud(String fechaSolicitud) { this.fechaSolicitud = fechaSolicitud; }
 
     public String getFechaRetiro() { return fechaRetiro; }
     public void setFechaRetiro(String fechaRetiro) { this.fechaRetiro = fechaRetiro; }

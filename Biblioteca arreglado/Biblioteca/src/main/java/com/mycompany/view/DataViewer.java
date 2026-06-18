@@ -22,16 +22,19 @@ import javax.swing.table.DefaultTableModel;
  */
 public class DataViewer extends JPanel {
     DefaultTableModel dtm;
-    JTable table;
-    JButton btnReadCreate;
-    JButton btnUpdate;
-    JButton btnDelete;
-    JButton btnSearch;
-    JRadioButton radioCritery1;
-    JRadioButton radioCritery2;
-    ButtonGroup radios; 
-    JTextField txtBusqueda;
-    JLabel lblTableName;
+    public JTable table;
+    public JButton btnReadCreate;
+    public JButton btnUpdate;
+    public JButton btnDelete;
+    public JButton btnSearch;
+    public JRadioButton radioCritery1;
+    public JRadioButton radioCritery2;
+    public ButtonGroup radios; 
+    public JTextField txtBusqueda;
+    public JLabel lblTableName;
+
+    /** Copia de las filas originales (sin el encabezado), para poder filtrar y luego restaurar. */
+    private final java.util.List<Object[]> filasOriginales = new java.util.ArrayList<>();
 
     public DataViewer(List<?> data, String tableName, String radio1Text, String radio2Text, String create, String update, String delete) {
         this.setBackground(Color.WHITE);
@@ -85,6 +88,7 @@ public class DataViewer extends JPanel {
                 List<?> filaData = (List<?>) data.get(i);
                 Object[] fila = filaData.toArray();
                 dtm.addRow(fila);
+                filasOriginales.add(fila);
             }
         }
 
@@ -109,6 +113,71 @@ public class DataViewer extends JPanel {
         topPanel.setBackground(Color.WHITE);
         this.add(scrollPane, BorderLayout.CENTER);
         this.add(bottomPanel, BorderLayout.SOUTH);
+
+        btnSearch.addActionListener(e -> aplicarFiltro());
+        txtBusqueda.addActionListener(e -> aplicarFiltro()); // permite buscar presionando Enter
+    }
+
+    /** Filtra las filas según el texto ingresado y el criterio (radio) seleccionado. Vacío = mostrar todo. */
+    private void aplicarFiltro() {
+        String criterio = txtBusqueda.getText().trim();
+        if (criterio.isEmpty()) {
+            mostrarFilas(filasOriginales);
+            return;
+        }
+        String criterioLower = criterio.toLowerCase();
+        int columna = resolverColumnaDeBusqueda();
+
+        java.util.List<Object[]> coincidencias = new java.util.ArrayList<>();
+        for (Object[] fila : filasOriginales) {
+            boolean coincide;
+            if (columna >= 0 && columna < fila.length) {
+                coincide = fila[columna] != null && fila[columna].toString().toLowerCase().contains(criterioLower);
+            } else {
+                // No se pudo determinar con certeza a qué columna corresponde el criterio
+                // elegido: como red de seguridad, se busca en toda la fila en vez de no filtrar nada.
+                coincide = false;
+                for (Object valor : fila) {
+                    if (valor != null && valor.toString().toLowerCase().contains(criterioLower)) {
+                        coincide = true;
+                        break;
+                    }
+                }
+            }
+            if (coincide) coincidencias.add(fila);
+        }
+        mostrarFilas(coincidencias);
+    }
+
+    /**
+     * Determina a qué columna de la tabla corresponde el radio button seleccionado.
+     * El texto del radio no siempre coincide al pie de la letra con el encabezado real
+     * de la columna (ej. "ID_Cliente" vs "ID Cliente / Socio"), así que primero se intenta
+     * una coincidencia exacta y, si falla, una coincidencia parcial normalizando guiones
+     * bajos y barras como espacios. Si ninguna calza, devuelve -1 (buscar en toda la fila).
+     */
+    private int resolverColumnaDeBusqueda() {
+        JRadioButton seleccionado = radioCritery2.isSelected() ? radioCritery2 : radioCritery1;
+        if (!seleccionado.isVisible() || seleccionado.getText() == null || seleccionado.getText().isBlank()) {
+            return -1;
+        }
+        String etiqueta = seleccionado.getText().trim().toLowerCase();
+        int columnas = dtm.getColumnCount();
+
+        for (int i = 0; i < columnas; i++) {
+            if (dtm.getColumnName(i).trim().equalsIgnoreCase(etiqueta)) return i;
+        }
+        String etiquetaNormalizada = etiqueta.replace("_", " ");
+        for (int i = 0; i < columnas; i++) {
+            String encabezado = dtm.getColumnName(i).toLowerCase().replace("_", " ").replace("/", " ");
+            if (encabezado.contains(etiquetaNormalizada) || etiquetaNormalizada.contains(encabezado)) return i;
+        }
+        return -1;
+    }
+
+    private void mostrarFilas(java.util.List<Object[]> filas) {
+        dtm.setRowCount(0);
+        for (Object[] fila : filas) dtm.addRow(fila);
     }
 
     private void configurarBoton(JButton boton, String texto) {

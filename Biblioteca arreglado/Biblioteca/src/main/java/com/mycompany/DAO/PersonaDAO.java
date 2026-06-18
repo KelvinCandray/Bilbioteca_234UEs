@@ -25,6 +25,12 @@ public interface PersonaDAO {
     void registrarUsuario(Usuario usuario) throws Exception;
     void registrarEmpleado(Empleado empleado) throws Exception;
 
+    // Edición / eliminación
+    void actualizarPersona(Persona persona) throws Exception;
+    void actualizarUsuario(int idPersona, String usuario, String nuevaContrasena) throws Exception;
+    void actualizarEmpleado(int idPersona, double salario, String tipoEmpleado, String usuario, String nuevaContrasena) throws Exception;
+    void eliminarPersona(int idPersona) throws Exception;
+
     // Verificaciones
     boolean existePersona(int idPersona) throws Exception;
     boolean existeUsuario(int idPersona) throws Exception;
